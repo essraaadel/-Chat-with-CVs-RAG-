@@ -1,0 +1,16 @@
+# Vector DB - HTTP mode only (no grpcio needed)
+qdrant-client[http]==1.9.1
+
+# LLM - Gemini 2.5 Flash (free tier available)
+google-generativeai==0.8.3
+
+# Embeddings - HuggingFace local model (free, no API key)
+sentence-transformers==3.0.1
+
+# CV parsing
+PyMuPDF==1.25.5
+python-docx==1.1.2
+
+# UI & utils
+streamlit==1.35.0
+python-dotenv==1.0.1
