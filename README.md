@@ -80,8 +80,8 @@ hr-cv-rag/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/hr-cv-rag.git
-cd hr-cv-rag
+git clone https://github.com/essraaadel/-Chat-with-CVs-RAG-.git
+cd -Chat-with-CVs-RAG-
 ```
 
 ### 2. Set up Python environment
@@ -189,7 +189,7 @@ All settings live at the top of `clients.py`:
 |---|---|---|
 | `EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | HuggingFace model for embeddings |
 | `VECTOR_DIM` | `384` | Must match the embedding model |
-| `GEMINI_MODEL` | `gemini-2.5-flash-preview-04-17` | Swap to `gemini-1.5-pro` for heavier tasks |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Swap to `gemini-1.5-pro` for heavier tasks |
 | `CHUNK_SIZE` | `500` | Characters per chunk |
 | `CHUNK_OVERLAP` | `100` | Overlap between chunks |
 
