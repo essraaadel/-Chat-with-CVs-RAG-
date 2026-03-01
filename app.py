@@ -1,3 +1,5 @@
+
+
 """
 app.py
 ------
@@ -47,7 +49,7 @@ st.markdown("""
     align-items: center;
     gap: 1rem;
 }
-.brand-icon  { font-size: 2.4rem;
+.brand-icon  { font-size: 2.4rem; }
 .brand-title { color: #e2ecff; font-size: 1.75rem; font-weight: 700; margin: 0; }
 .brand-meta  { color: #3d6090; font-size: 0.82rem; margin: 0; }
 .brand-badge {
@@ -72,16 +74,38 @@ st.markdown("""
     line-height: 1.55;
     border: 1px solid #1a3560;
 }
-.bubble-bot {
+
+/* Bot bubble wrapper — targets the Streamlit block inside */
+.bubble-bot-outer + div,
+div:has(> .bubble-bot-outer) {
     background: #07111f;
-    color: #b0c8e8;
-    padding: 0.8rem 1.1rem;
+    border: 1px solid #0f2240;
     border-radius: 16px 16px 16px 4px;
     margin: 5px 18% 5px 0;
-    border: 1px solid #0f2240;
+    padding: 0.8rem 1.1rem;
     font-size: 0.94rem;
     line-height: 1.65;
 }
+
+/* Style markdown elements inside bot bubble */
+[data-testid="stMarkdownContainer"] p  { color: #b0c8e8; margin: 0.3rem 0; }
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3 { color: #e2ecff; margin: 0.6rem 0 0.3rem 0; font-family: "Outfit", sans-serif; }
+[data-testid="stMarkdownContainer"] strong { color: #6aabff; }
+[data-testid="stMarkdownContainer"] em     { color: #8ab8e8; }
+[data-testid="stMarkdownContainer"] ul,
+[data-testid="stMarkdownContainer"] ol     { color: #b0c8e8; padding-left: 1.2rem; margin: 0.4rem 0; }
+[data-testid="stMarkdownContainer"] li     { margin: 0.2rem 0; }
+[data-testid="stMarkdownContainer"] code   { background: #0d2040; color: #5aadff; padding: 2px 6px; border-radius: 4px; font-family: "JetBrains Mono", monospace; font-size: 0.85em; }
+[data-testid="stMarkdownContainer"] pre    { background: #060e1c; border: 1px solid #1a3050; border-radius: 8px; padding: 0.8rem; overflow-x: auto; }
+[data-testid="stMarkdownContainer"] pre code { background: none; padding: 0; color: #7dc8ff; }
+[data-testid="stMarkdownContainer"] table  { border-collapse: collapse; width: 100%; margin: 0.6rem 0; }
+[data-testid="stMarkdownContainer"] th     { background: #0d2040; color: #4a9eff; padding: 0.4rem 0.8rem; border: 1px solid #1a3560; font-size: 0.85rem; }
+[data-testid="stMarkdownContainer"] td     { color: #8ab8e8; padding: 0.35rem 0.8rem; border: 1px solid #0f2035; font-size: 0.84rem; }
+[data-testid="stMarkdownContainer"] tr:nth-child(even) td { background: #060e1c; }
+[data-testid="stMarkdownContainer"] blockquote { border-left: 3px solid #2563a8; padding-left: 0.8rem; color: #6a8ab0; margin: 0.4rem 0; font-style: italic; }
+[data-testid="stMarkdownContainer"] hr     { border: none; border-top: 1px solid #1a3050; margin: 0.6rem 0; }
 
 /* Source chunk cards */
 .chunk-wrap {
@@ -280,9 +304,31 @@ with st.sidebar:
 chat_col, src_col = st.columns([3, 2], gap="medium")
 
 # ── Chat Column ───────────────────────────────────────────────────────────────
+
+def run_rag(prompt: str):
+    """Run the full RAG pipeline for a given prompt and update session state."""
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    if not candidates:
+        answer = "⚠️ No CVs indexed yet. Upload some using the sidebar."
+        st.session_state.last_chunks = []
+    else:
+        with st.spinner("Searching CVs and generating answer..."):
+            history = [
+                {"role": m["role"], "content": m["content"]}
+                for m in st.session_state.messages[:-1]
+            ]
+            result  = rag(prompt, st.session_state.qdrant, st.session_state.gemini, history)
+            answer  = result["answer"]
+            st.session_state.last_chunks = result["chunks"]
+
+    st.session_state.messages.append({"role": "assistant", "content": answer})
+
+
 with chat_col:
     st.markdown("### 💬 Chat")
 
+    # Suggested questions — only shown when chat is empty
     if not st.session_state.messages:
         st.markdown("<small style='color:#1a3050'>Suggested questions:</small>", unsafe_allow_html=True)
         for sug in [
@@ -293,28 +339,28 @@ with chat_col:
             "Rank all candidates for a data science role",
         ]:
             if st.button(sug, key=f"s_{sug}"):
-                st.session_state.messages.append({"role": "user", "content": sug})
+                run_rag(sug)   # ← now actually calls the pipeline
                 st.rerun()
 
+    # Render chat history
     for msg in st.session_state.messages:
-        css = "bubble-user" if msg["role"] == "user" else "bubble-bot"
-        icon = "🧑" if msg["role"] == "user" else "🤖"
-        st.markdown(f'<div class="{css}">{icon} {msg["content"]}</div>', unsafe_allow_html=True)
-
-    if prompt := st.chat_input("Ask about your candidates..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-
-        if not candidates:
-            answer = "⚠️ No CVs indexed yet. Upload some using the sidebar."
-            st.session_state.last_chunks = []
+        if msg["role"] == "user":
+            # User bubble — plain text, right-aligned HTML
+            safe_content = msg["content"].replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+            st.markdown(
+                f'<div class="bubble-user">🧑 {safe_content}</div>',
+                unsafe_allow_html=True
+            )
         else:
-            with st.spinner("Searching CVs and generating answer..."):
-                history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[:-1]]
-                result  = rag(prompt, st.session_state.qdrant, st.session_state.gemini, history)
-                answer  = result["answer"]
-                st.session_state.last_chunks = result["chunks"]
+            # Bot response — use st.container with CSS class for styling + native markdown
+            with st.container():
+                st.markdown('<div class="bubble-bot-outer">', unsafe_allow_html=True)
+                st.markdown(f"🤖 {msg['content']}")
+                st.markdown('</div>', unsafe_allow_html=True)
 
-        st.session_state.messages.append({"role": "assistant", "content": answer})
+    # Manual chat input
+    if prompt := st.chat_input("Ask about your candidates..."):
+        run_rag(prompt)   # ← same function, consistent behavior
         st.rerun()
 
 
@@ -333,14 +379,25 @@ with src_col:
         st.markdown(f"<small style='color:#1a3050'>{len(chunks)} chunks · sorted by relevance score</small>", unsafe_allow_html=True)
         st.markdown("")
 
+
         for i, chunk in enumerate(chunks, 1):
-            safe = chunk["text"].replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+            # Safety: ensure text is always a plain string before rendering
+            raw_text = chunk["text"]
+            if isinstance(raw_text, dict):
+               raw_text = raw_text.get("text", str(raw_text))
+            safe = str(raw_text).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+
+            # Safety: ensure section is always a string
+            section = chunk.get("section", "general")
+            if isinstance(section, dict):
+                section = "general"
+
             st.markdown(f"""
             <div class="chunk-wrap">
-                <div class="chunk-meta">
-                    <span class="chunk-name">👤 {chunk['candidate']}</span>
-                    <span class="chunk-badge">score {chunk['score']}</span>
-                </div>
-                <div class="chunk-sub">chunk {chunk['chunk_index']} · {chunk['filename']}</div>
-                <div class="chunk-text">{safe}</div>
-            </div>""", unsafe_allow_html=True)
+               <div class="chunk-meta">
+                 <span class="chunk-name">👤 {chunk['candidate']}</span>
+                 <span class="chunk-badge">score {chunk['score']}</span>
+               </div>
+               <div class="chunk-sub">📂 {section} · chunk {chunk['chunk_index']} · {chunk['filename']}</div>
+               <div class="chunk-text">{safe}</div>
+           </div>""", unsafe_allow_html=True)
