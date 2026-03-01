@@ -50,10 +50,135 @@ def extract_text(path: str) -> str:
     return fn[ext](path)
 
 
-# ── Chunking ──────────────────────────────────────────────────────────────────
+# ── Section Detection ────────────────────────────────────────────────────────
 
-def chunk_text(text: str) -> list[str]:
-    """Overlapping chunks that prefer to break at newlines (preserves CV sections)."""
+# All known CV section headers — extend this list freely with your own
+CV_SECTION_HEADERS = [
+    # Summary / Profile
+    "summary", "objective", "profile", "about me", "about", "personal statement",
+    "professional summary", "career objective", "overview", "introduction",
+    # Experience
+    "experience", "work experience", "employment", "employment history",
+    "professional experience", "career history", "work history",
+    "internship", "internships", "job experience", "practical experience","Training Experience","Professional Training","Training"
+    # Education
+    "education", "academic background", "qualifications", "academic qualifications",
+    "educational background", "degrees", "academic history", "studies",
+    # Skills
+    "skills", "technical skills", "core competencies", "competencies",
+    "key skills", "areas of expertise", "expertise", "technologies",
+    "tools", "programming languages", "soft skills", "hard skills",
+    "languages", "technical expertise",
+    # Projects
+    "projects", "personal projects", "academic projects",
+    "key projects", "notable projects", "portfolio", "works",
+    # Certifications
+    "certifications", "certificates", "licenses", "accreditations",
+    "professional development", "courses", "training", "credentials",
+    # Achievements
+    "achievements", "accomplishments", "awards", "honors",
+    "recognition", "publications", "research", "patents",
+    # Other
+    "references", "volunteer", "volunteering", "extracurricular",
+    "interests", "hobbies", "activities", "leadership", "clubs",
+    "contact", "personal information", "personal details", "links",
+]
+
+
+def is_section_header(line: str) -> bool:
+    """
+    Detects if a line is a CV section header using 3 rules:
+    1. Matches a known keyword (flexible — handles colons, extra words, mixed case)
+    2. Short ALL CAPS line  e.g. "WORK EXPERIENCE"
+    3. Short line ending with colon  e.g. "Projects:"
+    """
+    stripped = line.strip()
+    if not stripped or len(stripped) > 60:
+        return False
+
+    lower = stripped.lower().rstrip(":")   # normalize: remove trailing colon, lowercase
+
+    # Rule 1 — known keyword: exact or starts-with match
+    for header in CV_SECTION_HEADERS:
+        if lower == header:
+            return True
+        if lower.startswith(header) and len(stripped) < 45:
+            return True
+
+    # Rule 2 — short ALL CAPS line (min 3 chars to avoid false positives)
+    if stripped.isupper() and 3 < len(stripped) < 45:
+        return True
+
+    # Rule 3 — short line ending with colon
+    if stripped.endswith(":") and len(stripped) < 45:
+        return True
+
+    return False
+
+
+def normalize_header(line: str) -> str:
+    """Turn a raw header line into a clean readable label."""
+    return line.strip().rstrip(":").strip().title()
+
+
+# ── Smart Section-Based Chunker ───────────────────────────────────────────────
+
+def chunk_text(text: str) -> list[dict]:
+    """
+    PRIMARY strategy: split CV at detected section boundaries.
+    Each chunk = one CV section (Education, Skills, Experience, etc.)
+
+    Returns list of dicts: [{"text": "...", "section": "Education"}, ...]
+
+    Falls back to fixed-size chunking if fewer than 2 sections are detected.
+    Large sections are further split into sub-chunks with (part N) labels.
+    """
+    lines = text.split("\n")
+
+    sections: list[dict] = []
+    current_section = "General"
+    current_lines:  list[str] = []
+
+    for line in lines:
+        if is_section_header(line):
+            content = "\n".join(current_lines).strip()
+            if content:
+                sections.append({"text": content, "section": current_section})
+            current_section = normalize_header(line)
+            current_lines   = []
+        else:
+            current_lines.append(line)
+
+    # Capture last section
+    content = "\n".join(current_lines).strip()
+    if content:
+        sections.append({"text": content, "section": current_section})
+
+    # ── Fallback if no sections detected ─────────────────────────────────────
+    if len(sections) < 2:
+        print("   ⚠️  No sections detected — using fixed-size fallback")
+        return _fixed_size_chunks(text)
+
+    print(f"   📂 Detected sections: {[s['section'] for s in sections]}")
+
+    # ── Split oversized sections ──────────────────────────────────────────────
+    final: list[dict] = []
+    for sec in sections:
+        if len(sec["text"]) <= CHUNK_SIZE:
+            final.append(sec)
+        else:
+            sub_chunks = _fixed_size_chunks(sec["text"])
+            for i, sub in enumerate(sub_chunks):
+                final.append({
+                    "text":    sub["text"],
+                    "section": f"{sec['section']} (part {i + 1})"
+                })
+
+    return final
+
+
+def _fixed_size_chunks(text: str) -> list[dict]:
+    """Fixed-size fallback chunker. Returns same dict format for consistency."""
     chunks, start = [], 0
     while start < len(text):
         end = start + CHUNK_SIZE
@@ -63,7 +188,7 @@ def chunk_text(text: str) -> list[str]:
                 end = bp
         chunk = text[start:end].strip()
         if chunk:
-            chunks.append(chunk)
+            chunks.append({"text": chunk, "section": "general"})
         start = end - CHUNK_OVERLAP
     return chunks
 
@@ -108,24 +233,26 @@ def ingest_cvs():
 
         print(f"   ✅ {len(text):,} characters")
 
-        chunks     = chunk_text(text)
-        embeddings = embed_texts(chunks)   # local HuggingFace model, no API key needed
+        chunk_dicts  = chunk_text(text)                          # list of {text, section}
+        chunk_texts  = [c["text"] for c in chunk_dicts]           # plain text for embedding
+        embeddings   = embed_texts(chunk_texts)
 
-        print(f"   ✂️  {len(chunks)} chunks | 🔢 embeddings done")
+        print(f"   ✂️  {len(chunk_dicts)} chunks | 🔢 embeddings done")
 
         points = [
             PointStruct(
                 id=str(uuid.uuid4()),
                 vector=emb,
                 payload={
-                    "text":         chunk,
+                    "text":         cd["text"],
+                    "section":      cd["section"],                 # ← section label
                     "candidate":    candidate_name,
                     "filename":     filename,
                     "chunk_index":  i,
-                    "total_chunks": len(chunks),
+                    "total_chunks": len(chunk_dicts),
                 }
             )
-            for i, (chunk, emb) in enumerate(zip(chunks, embeddings))
+            for i, (cd, emb) in enumerate(zip(chunk_dicts, embeddings))
         ]
 
         qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
@@ -134,6 +261,33 @@ def ingest_cvs():
 
     print(f"✅ Done! {total_added} new chunks added.")
     print(f"📊 Total vectors in DB: {qdrant.count(COLLECTION_NAME).count}")
+
+
+def reindex_all():
+    """
+    Delete ALL vectors from Qdrant and re-index every CV in /data from scratch.
+    Use this when you upgrade the chunking strategy to avoid stale/mixed data.
+    """
+    qdrant = get_qdrant()
+
+    # Step 1 — wipe the collection
+    existing = [c.name for c in qdrant.get_collections().collections]
+    if COLLECTION_NAME in existing:
+        qdrant.delete_collection(COLLECTION_NAME)
+        print(f"🗑️  Deleted collection '{COLLECTION_NAME}'")
+
+    # Step 2 — recreate it fresh
+    from qdrant_client.models import Distance, VectorParams
+    from clients import VECTOR_DIM
+    qdrant.create_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE)
+    )
+    print(f"✅ Fresh collection created")
+
+    # Step 3 — re-index everything
+    print()
+    ingest_cvs()
 
 
 def list_candidates():
@@ -172,7 +326,9 @@ if __name__ == "__main__":
             list_candidates()
         elif cmd == "delete" and len(sys.argv) > 2:
             delete_candidate(sys.argv[2])
+        elif cmd == "reindex":
+            reindex_all()
         else:
-            print("Usage:\n  python ingest.py\n  python ingest.py list\n  python ingest.py delete <name>")
+            print("Usage:\n  python ingest.py\n  python ingest.py list\n  python ingest.py delete <name>\n  python ingest.py reindex")
     else:
         ingest_cvs()
